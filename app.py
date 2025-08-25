@@ -43,15 +43,10 @@ def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time,
     Extracts the audio segment between start_time and end_time (in seconds) and sends only that segment to Gemini for transcription.
     """
     try:
-        # Try to load audio as WAV, fallback to MP3 if needed
-        try:
-            audio = AudioSegment.from_file(io.BytesIO(full_audio_bytes), format="wav")
-            mime_type = "audio/wav"
-        except Exception:
-            # pydub can often auto-detect the format from the bytes
-            audio = AudioSegment.from_file(io.BytesIO(full_audio_bytes))
-            # Gemini expects wav, so we will export as wav regardless of input format
-            mime_type = "audio/wav"
+        # pydub can often auto-detect the format from the bytes
+        audio = AudioSegment.from_file(io.BytesIO(full_audio_bytes))
+        # Gemini expects wav, so we will export as wav regardless of input format
+        mime_type = "audio/wav"
 
         # Convert start/end to milliseconds
         start_ms = int(float(start_time) * 1000)
@@ -279,7 +274,7 @@ def metadata_form():
             st.rerun()
 
 # =====================================================================================
-# PAGE 2: AUDIO ANNOTATION AND JSON EDITOR (UPDATED TO USE GEMINI FOR CLIPPING)
+# PAGE 2: AUDIO ANNOTATION AND JSON EDITOR (UPDATED WITH AUDIO METRICS)
 # =====================================================================================
 
 def annotation_page():
@@ -295,12 +290,6 @@ def annotation_page():
 
     st.markdown("---")
     
-    # On Streamlit Community Cloud, ffmpeg is pre-installed, so a path input is not needed.
-    # You can uncomment this if you need it for local development on a system where
-    # ffmpeg isn't in the system's PATH.
-    # ffmpeg_path = st.text_input(...)
-    # if ffmpeg_path: AudioSegment.converter = ffmpeg_path ...
-    
     uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"])
 
     if uploaded_file:
@@ -311,6 +300,36 @@ def annotation_page():
             }
 
         audio_bytes = st.session_state.current_audio['bytes']
+
+        # ================================================================== #
+        # ========= NEW: CALCULATE AND DISPLAY AUDIO METRICS HERE ========== #
+        # ================================================================== #
+        st.subheader("Audio File Properties")
+        try:
+            audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes))
+            
+            # --- Calculate Metrics ---
+            duration_seconds = len(audio_segment) / 1000.0
+            peak_loudness_dbfs = audio_segment.max_dBFS
+            sample_rate_khz = audio_segment.frame_rate / 1000.0
+            channels = "Stereo" if audio_segment.channels >= 2 else "Mono"
+            
+            # --- Display Metrics in Columns ---
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric(label="Duration", value=f"{duration_seconds:.2f} s")
+            with col2:
+                st.metric(label="Peak Loudness", value=f"{peak_loudness_dbfs:.2f} dBFS")
+            with col3:
+                st.metric(label="Sample Rate", value=f"{sample_rate_khz:.1f} kHz")
+            with col4:
+                st.metric(label="Channels", value=channels)
+
+        except Exception as e:
+            st.error(f"Could not process audio file to get properties. Error: {e}")
+        # ================================================================== #
+        # ======================= END OF NEW SECTION ======================= #
+        # ================================================================== #
 
         st.subheader("Audio Player")
         audio_player_component(audio_bytes)
@@ -339,7 +358,6 @@ def annotation_page():
                 elif start_float < 0:
                     st.error("Start time cannot be negative!")
                 else:
-                    # Get the API key from Streamlit secrets
                     try:
                         api_key = st.secrets["GEMINI_API_KEY"]
                     except (FileNotFoundError, KeyError):
@@ -351,7 +369,6 @@ def annotation_page():
                     )
 
                     if transcription is not None:
-                        # Handle special responses
                         if transcription == "[SILENCE]":
                             st.info("No speech detected in the specified time segment.")
                             st.session_state.transcription_content = ""
@@ -366,7 +383,6 @@ def annotation_page():
                             st.success(f"✅ Transcribed segment ({start_float}s - {end_float}s) successfully!")
                         st.rerun()
                     else:
-                        # Error message is already displayed inside the function
                         pass 
             except ValueError:
                 st.error("Please enter valid numeric values for start and end times")

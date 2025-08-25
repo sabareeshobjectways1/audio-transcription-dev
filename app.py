@@ -93,9 +93,6 @@ def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time,
 
         duration = end_time - start_time
         
-        # ======================================================================== #
-        # ========= NEW, STRICTER PROMPT TO FORCE RAW TEXT OUTPUT ONLY ========== #
-        # ======================================================================== #
         prompt = f"""You are a strict, expert audio transcription AI. Your single task is to transcribe the provided audio segment with perfect accuracy.
 
 **CONTEXT:**
@@ -116,10 +113,7 @@ def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time,
 
 Transcribe the audio now.
 """
-        # ======================================================================== #
-        # ======================= END OF NEW PROMPT ============================== #
-        # ======================================================================== #
-
+        
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": audio_base64}}]}],
             "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000, "topP": 0.8, "topK": 40}
@@ -252,13 +246,19 @@ def annotation_page():
     uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"])
 
     if uploaded_file:
-        if 'current_audio' not not in st.session_state or st.session_state.current_audio.get('name') != uploaded_file.name:
+        # CORRECTED LINE: Removed the extra 'not'
+        if 'current_audio' not in st.session_state or st.session_state.current_audio.get('name') != uploaded_file.name:
+            # Store the original, high-quality audio bytes in session state
             st.session_state.current_audio = {'name': uploaded_file.name, 'bytes': uploaded_file.getvalue()}
+            # Process the audio to create a potentially smaller version for the player
             player_bytes, player_format = process_audio_for_player(st.session_state.current_audio['bytes'])
             st.session_state.current_audio['player_bytes'] = player_bytes
             st.session_state.current_audio['player_format'] = player_format
 
+        # Use the original bytes for analysis and properties
         original_audio_bytes = st.session_state.current_audio['bytes']
+        
+        # Use the (potentially smaller) processed bytes for the player
         player_audio_bytes = st.session_state.current_audio.get('player_bytes')
         player_audio_format = st.session_state.current_audio.get('player_format')
 
@@ -272,10 +272,12 @@ def annotation_page():
 
         st.subheader("Audio Player")
         if player_audio_bytes and player_audio_format:
+            # Pass the optimized bytes and format to the player component
             audio_player_component(player_audio_bytes, player_audio_format)
         else:
             st.error("Audio could not be processed for the player.")
         
+        # --- The rest of the page uses original_audio_bytes for transcription ---
         st.subheader("Add a New Segment")
         time_col1, time_col2, transcribe_col = st.columns([2, 2, 1])
         with time_col1: start_time = st.text_input("Start Time (s)", "0.0", key="start_time_input")
@@ -288,6 +290,7 @@ def annotation_page():
                     if not(start_float < end_float and start_float >= 0): st.error("Start time must be less than end time and not negative.")
                     else:
                         api_key = st.secrets["GEMINI_API_KEY"]
+                        # Pass the ORIGINAL bytes for high-quality transcription
                         transcription = transcribe_audio_segment_with_gemini(original_audio_bytes, start_float, end_float, api_key)
                         if transcription is not None:
                             if transcription in ["[SILENCE]", "[NOISE]", "[NO_CONTENT]"]: st.info(f"API response: {transcription}"); st.session_state.transcription_content = transcription if transcription == "[NOISE]" else ""

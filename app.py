@@ -48,7 +48,6 @@ def process_audio_for_player(audio_bytes: bytes):
     file_size_mb = len(audio_bytes) / (1024 * 1024)
     
     if file_size_mb <= LARGE_FILE_THRESHOLD_MB:
-        # For small files, just convert to WAV for consistency
         st.info("Small audio file detected. Using original quality for player.")
         try:
             audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
@@ -56,24 +55,16 @@ def process_audio_for_player(audio_bytes: bytes):
             audio.export(buf, format="wav")
             return buf.getvalue(), "wav"
         except Exception:
-             # If it's already a format pydub handles, just pass it through, browser will try to decode
-             return audio_bytes, "wav" # Assume wav, most browsers can handle it.
+             return audio_bytes, "wav"
     else:
         st.warning(f"Large file detected ({file_size_mb:.1f} MB). Optimizing for player performance...")
         with st.spinner("Creating a lightweight audio preview... (This may take a moment)"):
             try:
                 audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
-                
-                # --- Optimization Steps ---
-                # 1. Convert to mono
                 audio = audio.set_channels(1)
-                # 2. Downsample for speech (22.05 kHz is sufficient)
                 audio = audio.set_frame_rate(22050)
-                
-                # 3. Export as a compressed format (MP3) with a lower bitrate
                 buf = io.BytesIO()
                 audio.export(buf, format="mp3", bitrate="64k")
-                
                 st.success("Optimization complete! Player is now ready.")
                 return buf.getvalue(), "mp3"
             except Exception as e:
@@ -86,7 +77,6 @@ def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time,
     Extracts the audio segment from the ORIGINAL high-quality audio bytes.
     """
     try:
-        # ALWAYS use the original full_audio_bytes for transcription
         audio = AudioSegment.from_file(io.BytesIO(full_audio_bytes))
         
         start_ms = int(float(start_time) * 1000)
@@ -102,7 +92,33 @@ def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time,
         headers = {'Content-Type': 'application/json'}
 
         duration = end_time - start_time
-        prompt = f"""You are an expert audio transcriptionist... (Your prompt here)""" # Shortened for brevity
+        
+        # ======================================================================== #
+        # ========= NEW, STRICTER PROMPT TO FORCE RAW TEXT OUTPUT ONLY ========== #
+        # ======================================================================== #
+        prompt = f"""You are a strict, expert audio transcription AI. Your single task is to transcribe the provided audio segment with perfect accuracy.
+
+**CONTEXT:**
+- You are processing a short audio clip sliced from a longer recording.
+- The provided audio clip's duration is {duration:.3f} seconds.
+- Your analysis must be confined strictly to the content within this clip.
+
+**CRITICAL INSTRUCTIONS:**
+1.  **TRANSCRIBE ACCURATELY:** Listen carefully and transcribe the speech in its original language. If the speech is in Mandarin, use Mandarin characters.
+2.  **HANDLE NON-SPEECH:**
+    - If there is no audible speech in the segment, your entire response MUST be the exact text: `[SILENCE]`
+    - If there is only background noise, music, or non-speech sounds, your entire response MUST be the exact text: `[NOISE]`
+3.  **OUTPUT FORMAT IS NON-NEGOTIABLE:**
+    - Your response MUST contain ONLY the transcribed text.
+    - DO NOT include any extra words, explanations, translations, notes, or introductory phrases like "Here is the transcription:".
+    - DO NOT add quotation marks around the transcription unless they were actually spoken.
+    - Your entire output will be the raw transcribed text and nothing else.
+
+Transcribe the audio now.
+"""
+        # ======================================================================== #
+        # ======================= END OF NEW PROMPT ============================== #
+        # ======================================================================== #
 
         payload = {
             "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": audio_base64}}]}],
@@ -160,7 +176,6 @@ def audio_player_component(audio_bytes: bytes, audio_format: str = "wav"):
             responsive: true, fillParent: true, minPxPerSec: 1,
             cursorWidth: 1, cursorColor: 'purple'
         }});
-        // Use the dynamic audio_format here
         wavesurfer.load('data:audio/{audio_format};base64,{b64_audio}');
         const playBtn = document.getElementById('playBtn');
         const timeDisplay = document.getElementById('time-display');
@@ -182,7 +197,6 @@ def audio_player_component(audio_bytes: bytes, audio_format: str = "wav"):
 def metadata_form():
     st.title("Step 1: Input Metadata")
     st.markdown("---")
-    # ... (This entire function is unchanged and can be copied from your version) ...
     with st.form(key="metadata_form"):
         st.subheader("1. Type")
         type_name = st.text_input("Name", "MULTI_SPEAKER_LONG_FORM_TRANSCRIPTION")
@@ -238,25 +252,19 @@ def annotation_page():
     uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"])
 
     if uploaded_file:
-        if st.session_state.current_audio is None or st.session_state.current_audio.get('name') != uploaded_file.name:
-            # Store the original, high-quality audio bytes in session state
+        if 'current_audio' not not in st.session_state or st.session_state.current_audio.get('name') != uploaded_file.name:
             st.session_state.current_audio = {'name': uploaded_file.name, 'bytes': uploaded_file.getvalue()}
-            # Process the audio to create a potentially smaller version for the player
             player_bytes, player_format = process_audio_for_player(st.session_state.current_audio['bytes'])
             st.session_state.current_audio['player_bytes'] = player_bytes
             st.session_state.current_audio['player_format'] = player_format
 
-        # Use the original bytes for analysis and properties
         original_audio_bytes = st.session_state.current_audio['bytes']
-        
-        # Use the (potentially smaller) processed bytes for the player
         player_audio_bytes = st.session_state.current_audio.get('player_bytes')
         player_audio_format = st.session_state.current_audio.get('player_format')
 
         st.subheader("Audio File Properties (from original file)")
         try:
             audio_segment = AudioSegment.from_file(io.BytesIO(original_audio_bytes))
-            # ... (property display logic is unchanged) ...
             duration_seconds = len(audio_segment) / 1000.0; peak_loudness_dbfs = audio_segment.max_dBFS; sample_rate_khz = audio_segment.frame_rate / 1000.0; channels = "Stereo" if audio_segment.channels >= 2 else "Mono"
             col1, col2, col3, col4 = st.columns(4); col1.metric(label="Duration", value=f"{duration_seconds:.2f} s"); col2.metric(label="Peak Loudness", value=f"{peak_loudness_dbfs:.2f} dBFS"); col3.metric(label="Sample Rate", value=f"{sample_rate_khz:.1f} kHz"); col4.metric(label="Channels", value=channels)
         except Exception as e:
@@ -264,14 +272,11 @@ def annotation_page():
 
         st.subheader("Audio Player")
         if player_audio_bytes and player_audio_format:
-            # Pass the optimized bytes and format to the player component
             audio_player_component(player_audio_bytes, player_audio_format)
         else:
             st.error("Audio could not be processed for the player.")
         
-        # --- The rest of the page uses original_audio_bytes for transcription ---
         st.subheader("Add a New Segment")
-        # ... (rest of the annotation logic is unchanged and can be copied from your version) ...
         time_col1, time_col2, transcribe_col = st.columns([2, 2, 1])
         with time_col1: start_time = st.text_input("Start Time (s)", "0.0", key="start_time_input")
         with time_col2: end_time = st.text_input("End Time (s)", "5.0", key="end_time_input")
@@ -283,7 +288,6 @@ def annotation_page():
                     if not(start_float < end_float and start_float >= 0): st.error("Start time must be less than end time and not negative.")
                     else:
                         api_key = st.secrets["GEMINI_API_KEY"]
-                        # Pass the ORIGINAL bytes for high-quality transcription
                         transcription = transcribe_audio_segment_with_gemini(original_audio_bytes, start_float, end_float, api_key)
                         if transcription is not None:
                             if transcription in ["[SILENCE]", "[NOISE]", "[NO_CONTENT]"]: st.info(f"API response: {transcription}"); st.session_state.transcription_content = transcription if transcription == "[NOISE]" else ""
@@ -312,7 +316,6 @@ def annotation_page():
                 else: st.error("Cannot add segment without a speaker.")
 
     if st.session_state.segments:
-        # ... (rest of the page is unchanged and can be copied from your version) ...
         st.subheader("Annotated Segments")
         st.session_state.segments = sorted(st.session_state.segments, key=lambda x: x.get('start', 0))
         for i, seg in enumerate(st.session_state.segments):
@@ -321,7 +324,6 @@ def annotation_page():
                 if st.button("Delete Segment", key=f"del_{seg['segmentId']}"): st.session_state.segments = [s for s in st.session_state.segments if s['segmentId'] != seg['segmentId']]; st.rerun()
 
     if st.session_state.metadata and st.session_state.speakers:
-        # ... (rest of the page is unchanged and can be copied from your version) ...
         final_json = {"type": st.session_state.metadata['type'],"value": {"languages": [st.session_state.metadata['internalLanguageCode']],**st.session_state.metadata,"speakers": st.session_state.speakers,"segments": st.session_state.segments,"taskStatus": {"segmentation": {"workflowStatus": "COMPLETE", "workflowType": "LABEL"},"speakerId": {"workflowStatus": "COMPLETE", "workflowType": "LABEL"},"transcription": {"workflowStatus": "COMPLETE", "workflowType": "LABEL"}}}}
         st.subheader("Live JSON Editor"); edited_json_string = st.text_area("JSON Data", json.dumps(final_json, indent=4), height=600, key="json_editor")
         if st.button("Apply JSON Changes"):

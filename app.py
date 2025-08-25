@@ -6,9 +6,10 @@ from datetime import datetime
 import requests
 import io
 from pydub import AudioSegment
+import numpy as np
+import matplotlib.pyplot as plt
 
 # --- Page Configuration ---
-
 st.set_page_config(
     page_title="Audio Annotation Tool",
     page_icon="🎙️",
@@ -16,12 +17,9 @@ st.set_page_config(
 )
 
 # --- App Constants ---
-# Set a threshold for large files (in megabytes). Files larger than this
-# will use the standard audio player for better performance.
 LARGE_FILE_THRESHOLD_MB = 25
 
 # --- Initialize Session State ---
-
 if 'metadata' not in st.session_state:
     st.session_state.metadata = {}
 if 'speakers' not in st.session_state:
@@ -42,6 +40,39 @@ def get_json_download_link(data, filename="annotated_data.json"):
     json_str = json.dumps(data, indent=4)
     b64 = base64.b64encode(json_str.encode()).decode()
     return f'<a href="data:file/json;base64,{b64}" download="{filename}">Download JSON File</a>'
+
+def generate_waveform_plot(audio_bytes: bytes):
+    """
+    Generates a static waveform image from audio bytes using Matplotlib.
+    This is used for large files to avoid crashing the browser.
+    """
+    try:
+        audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+        samples = np.array(audio.get_array_of_samples())
+
+        # If stereo, just use the left channel for the waveform plot
+        if audio.channels > 1:
+            samples = samples[::audio.channels]
+
+        # Create time array
+        time = np.arange(len(samples)) / audio.frame_rate
+
+        fig, ax = plt.subplots(figsize=(12, 2))
+        ax.plot(time, samples, color='purple', linewidth=0.5)
+        ax.axis('off')  # Remove axes for a cleaner look
+        fig.patch.set_facecolor('#FFFFFF') # Set background to white
+        fig.tight_layout(pad=0)
+
+        # Save plot to an in-memory buffer
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception as e:
+        st.error(f"Failed to generate waveform plot: {e}")
+        return None
+
 
 def transcribe_audio_segment_with_gemini(full_audio_bytes, start_time, end_time, api_key):
     """
@@ -148,6 +179,7 @@ def metadata_form():
     st.title("Step 1: Input Metadata")
     st.markdown("---")
     with st.form(key="metadata_form"):
+        # ... (rest of the form is unchanged) ...
         st.subheader("1. Type")
         type_name = st.text_input("Name", "MULTI_SPEAKER_LONG_FORM_TRANSCRIPTION")
         type_version = st.text_input("Version", "3.1")
@@ -159,21 +191,17 @@ def metadata_form():
         st.subheader("4. Domain")
         domain_name = st.text_input("Domain Name", "Call-center")
         topic_list = st.text_input("Topic List (comma-separated)", "Banking")
-        
         st.subheader("5. Annotator Info")
         login_encrypted = st.text_input("Login Encrypted (Optional)", "")
         annotator_id = st.text_input("Annotator ID", "t5fb5aa2")
-
         st.subheader("6. Convention Info")
         master_convention = st.text_input("Master Convention Name", "awsTranscriptionGuidelines_en_US_3.1")
         custom_addendum = st.text_input("Custom Addendum (Optional)", "en_NZ_1.0")
         st.subheader("7. Speaker Details")
         speakers_input = []
         speaker_dominant_varieties_data = []
-
         for i in range(int(head_count)):
             st.markdown(f"**Speaker {i+1}**")
-            # ... (rest of the form is unchanged) ...
             speaker_id = st.text_input(f"Speaker ID (leave blank for auto)", key=f"speaker_id_{i}")
             gender = st.selectbox(f"Gender", ["Female", "Male", "Other"], key=f"gender_{i}")
             gender_source = st.text_input(f"Gender Source", "Annotator", key=f"gender_source_{i}")
@@ -211,7 +239,7 @@ def metadata_form():
             st.rerun()
 
 # =====================================================================================
-# PAGE 2: AUDIO ANNOTATION (UPDATED TO HANDLE LARGE FILES)
+# PAGE 2: AUDIO ANNOTATION (UPDATED TO HANDLE LARGE FILES WITH STATIC WAVEFORM)
 # =====================================================================================
 
 def annotation_page():
@@ -251,15 +279,21 @@ def annotation_page():
         file_size_mb = len(audio_bytes) / (1024 * 1024)
 
         if file_size_mb > LARGE_FILE_THRESHOLD_MB:
-            st.warning(f"🎧 Large file detected ({file_size_mb:.1f} MB). Using the standard player for performance. "
-                       "Note the timestamps manually for segmentation.")
+            st.info(f"🎧 Large file detected ({file_size_mb:.1f} MB). Displaying a static waveform for performance.")
+            
+            with st.spinner("Generating waveform plot for large file..."):
+                waveform_image = generate_waveform_plot(audio_bytes)
+            
+            if waveform_image:
+                st.image(waveform_image, use_column_width=True)
+
             st.audio(audio_bytes)
+            st.warning("Use the player above to listen and find timestamps manually for segmentation below.")
         else:
             audio_player_component(audio_bytes)
         # ======================================================================== #
         # ======================= END OF PERFORMANCE FIX ========================= #
         # ======================================================================== #
-
 
         st.subheader("Add a New Segment")
         time_col1, time_col2, transcribe_col = st.columns([2, 2, 1])
@@ -270,6 +304,7 @@ def annotation_page():
         with transcribe_col:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("🎙️ Transcribe", help="Transcribe this audio segment using Gemini"):
+                # ... (rest of transcription logic is unchanged) ...
                 try:
                     start_float, end_float = float(start_time), float(end_time)
                     if start_float >= end_float or start_float < 0:
@@ -290,11 +325,11 @@ def annotation_page():
                             st.error("GEMINI_API_KEY not found. Please add it to your Streamlit secrets.")
                 except ValueError:
                     st.error("Please enter valid numeric values for start and end times.")
-        
+
         with st.form(key="segment_form", clear_on_submit=True):
+            # ... (rest of the form is unchanged) ...
             transcription = st.text_area("Transcription Content", value=st.session_state.transcription_content,
                                        help="Use the 'Transcribe' button to auto-fill this field")
-            
             c1, c2, c3 = st.columns(3)
             with c1:
                 primary_type = st.selectbox("Primary Type", ["Speech", "Noise", "Music", "Silence"], index=0)
@@ -307,7 +342,6 @@ def annotation_page():
                 else:
                     st.warning("No speakers defined in metadata.")
                     selected_speaker_id = None
-
             if st.form_submit_button("Add Segment"):
                 if selected_speaker_id:
                     try:
@@ -331,6 +365,7 @@ def annotation_page():
                     st.error("Cannot add segment without a speaker.")
 
     if st.session_state.segments:
+        # ... (rest of the page is unchanged) ...
         st.subheader("Annotated Segments")
         st.session_state.segments = sorted(st.session_state.segments, key=lambda x: float(x.get('start', 0)))
         for i, seg in enumerate(st.session_state.segments):

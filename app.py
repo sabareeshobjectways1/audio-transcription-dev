@@ -243,11 +243,11 @@ def annotation_page():
     st.title("Step 2: Audio Annotation")
     st.markdown("---")
     
-    uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"])
+    uploaded_file = st.file_uploader("Upload an audio file", type=["wav", "mp3", "m_4a", "ogg", "flac", "webm"])
 
     if uploaded_file:
-        # CORRECTED LINE: Removed the extra 'not'
-        if 'current_audio' not in st.session_state or st.session_state.current_audio.get('name') != uploaded_file.name:
+        # CORRECTED LINE: Changed the condition to safely check for None
+        if st.session_state.current_audio is None or st.session_state.current_audio.get('name') != uploaded_file.name:
             # Store the original, high-quality audio bytes in session state
             st.session_state.current_audio = {'name': uploaded_file.name, 'bytes': uploaded_file.getvalue()}
             # Process the audio to create a potentially smaller version for the player

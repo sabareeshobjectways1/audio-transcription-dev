@@ -284,7 +284,7 @@ def annotation_page():
         with time_col2: end_time = st.text_input("End Time (s)", "5.0", key="end_time_input")
         with transcribe_col:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("🎙️ Transcribe", help="Transcribe this audio segment using Gemini"):
+            if st.button("🎙️ Transcribe", help="Transcribe this audio segment"):
                 try:
                     start_float, end_float = float(start_time), float(end_time)
                     if not(start_float < end_float and start_float >= 0): st.error("Start time must be less than end time and not negative.")
@@ -345,3 +345,4 @@ elif st.session_state.page_state == 'annotation':
         st.session_state.page_state = 'metadata_input'
         st.rerun()
     annotation_page()
+
